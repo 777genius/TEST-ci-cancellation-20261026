@@ -1,0 +1,10 @@
+name: TEST Reusable
+on: workflow_call
+permissions:
+  contents: read
+jobs:
+  mock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: sleep 15

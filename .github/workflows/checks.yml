@@ -1,0 +1,67 @@
+name: TEST Checks
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: ['test/**']
+  workflow_dispatch:
+    inputs:
+      mode:
+        default: diagnostic
+        type: string
+concurrency:
+  group: test-checks-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'code' }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  current:
+    runs-on: ubuntu-latest
+    outputs:
+      current: ${{ steps.guard.outputs.current }}
+    steps:
+      - id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.sha }}
+          REF: ${{ github.ref_name }}
+        run: |
+          current=true
+          if [ "$EVENT" = pull_request ]; then
+            actual=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
+            [ "$actual" = "$EXPECTED" ] || current=false
+          elif [ "$EVENT" = push ]; then
+            actual=$(gh api "repos/$REPO/commits/$REF" --jq .sha)
+            [ "$actual" = "$EXPECTED" ] || current=false
+          fi
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+  matrix:
+    needs: current
+    if: needs.current.outputs.current == 'true'
+    strategy:
+      matrix:
+        lane: [one, two]
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Bounded mock work
+        env:
+          MESSAGE: ${{ github.event.head_commit.message || github.event.pull_request.title }}
+        run: |
+          echo "TEST barrier run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT sha=$GITHUB_SHA"
+          if [[ "$MESSAGE" = *slow* ]]; then sleep 100; else sleep 12; fi
+  reusable:
+    needs: current
+    if: needs.current.outputs.current == 'true'
+    uses: ./.github/workflows/reusable.yml
+  cleanup:
+    needs: [matrix, reusable]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: echo 'TEST cleanup; no external resources'
