@@ -1,0 +1,29 @@
+name: ReviewRouter Cleanup TEST
+run-name: ReviewRouter review ${{ inputs.review_request_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      review_request_id:
+        type: string
+        required: true
+      pr_number:
+        type: string
+        required: true
+      review_head_sha:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  mock-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancellable TEST mock review
+        env:
+          REVIEW_REQUEST_ID: ${{ inputs.review_request_id }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REVIEW_HEAD_SHA: ${{ inputs.review_head_sha }}
+        run: |
+          printf 'TEST review %s PR %s SHA %s; no external effects\n' "$REVIEW_REQUEST_ID" "$PR_NUMBER" "$REVIEW_HEAD_SHA"
+          sleep 90
