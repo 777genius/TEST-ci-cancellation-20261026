@@ -1,1 +1,1 @@
-slow macOS native cancellation fixture A
+slow Windows native cancellation fixture A
