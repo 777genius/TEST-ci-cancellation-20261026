@@ -1,4 +1,7 @@
 name: TEST Checks
+defaults:
+  run:
+    shell: bash
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -17,7 +20,7 @@ permissions:
   pull-requests: read
 jobs:
   current:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     outputs:
       current: ${{ steps.guard.outputs.current }}
     steps:
@@ -43,25 +46,27 @@ jobs:
     needs: current
     if: needs.current.outputs.current == 'true'
     strategy:
+      max-parallel: 1
       matrix:
         lane: [one, two]
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 4
     steps:
       - name: Bounded mock work
         env:
           MESSAGE: ${{ github.event.head_commit.message || github.event.pull_request.title }}
         run: |
+          trap 'echo "TEST same-job cleanup; no external resources"' EXIT
           echo "TEST barrier run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT sha=$GITHUB_SHA"
           if [[ "$MESSAGE" = *slow* ]]; then sleep 100; else sleep 12; fi
   reusable:
-    needs: current
+    needs: [current, matrix]
     if: needs.current.outputs.current == 'true'
     uses: ./.github/workflows/reusable.yml
   cleanup:
     needs: [matrix, reusable]
-    if: always()
-    runs-on: ubuntu-latest
+    if: always() && !cancelled()
+    runs-on: windows-latest
     timeout-minutes: 1
     steps:
       - run: echo 'TEST cleanup; no external resources'
