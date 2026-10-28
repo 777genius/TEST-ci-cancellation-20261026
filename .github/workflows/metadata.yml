@@ -19,6 +19,27 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           ACTION: ${{ github.event.action }}
+          REPO: ${{ github.repository }}
         run: |
-          echo "TEST head=$HEAD base=$BASE base_ref=$BASE_REF tested=$GITHUB_SHA action=$ACTION"
+          [[ "$HEAD" =~ ^[0-9a-f]{40}$ && "$BASE" =~ ^[0-9a-f]{40}$ ]]
+          git init exact-context
+          git -C exact-context remote add origin "https://github.com/$REPO.git"
+          git -C exact-context fetch --no-tags origin "$HEAD" "$BASE"
+          git -C exact-context checkout --detach "$BASE"
+          git -C exact-context config user.name iliya
+          git -C exact-context config user.email iliyazelenkog@gmail.com
+          [[ "$(git -C exact-context var GIT_AUTHOR_IDENT)" = "iliya <iliyazelenkog@gmail.com> "* ]]
+          [[ "$(git -C exact-context var GIT_COMMITTER_IDENT)" = "iliya <iliyazelenkog@gmail.com> "* ]]
+          git -C exact-context merge --no-ff --no-commit "$HEAD"
+          git -C exact-context commit -m "test: qualify exact PR head and base"
+          test -f exact-context/.github/workflows/metadata.yml
+          if [ "$BASE_REF" = fixture/base-final ]; then
+            grep -q 'TEST-only alternate base' exact-context/README.md
+          elif [ "$BASE_REF" = main ]; then
+            if grep -q 'TEST-only alternate base' exact-context/README.md; then exit 1; fi
+          fi
+          tested=$(git -C exact-context rev-parse HEAD)
+          parents=$(git -C exact-context show -s --format=%P HEAD)
+          [ "$parents" = "$BASE $HEAD" ]
+          echo "TEST head=$HEAD base=$BASE base_ref=$BASE_REF tested=$tested parents=$parents event_merge=$GITHUB_SHA action=$ACTION"
           if [ "$ACTION" = opened ]; then sleep 100; else sleep 2; fi
