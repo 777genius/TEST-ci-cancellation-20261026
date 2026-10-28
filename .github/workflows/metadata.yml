@@ -1,45 +1,102 @@
 name: TEST Metadata and Base
-on:
+'on':
   pull_request:
-    types: [opened, synchronize, edited]
+    types:
+    - opened
+    - synchronize
+    - edited
 concurrency:
-  group: test-metadata-${{ github.event.pull_request.number }}-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || 'code' }}
+  group: test-metadata-${{ github.event.pull_request.number }}-${{ github.event.action
+    == 'edited' && !github.event.changes.base && github.run_id || 'code' }}
   cancel-in-progress: true
 permissions:
   contents: read
 jobs:
   code:
     if: github.event.action != 'edited' || github.event.changes.base
-    runs-on: windows-latest
-    timeout-minutes: 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - shell: bash
-        env:
-          HEAD: ${{ github.event.pull_request.head.sha }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          ACTION: ${{ github.event.action }}
-          REPO: ${{ github.repository }}
-        run: |
-          [[ "$HEAD" =~ ^[0-9a-f]{40}$ && "$BASE" =~ ^[0-9a-f]{40}$ ]]
-          git init exact-context
-          git -C exact-context remote add origin "https://github.com/$REPO.git"
-          git -C exact-context fetch --no-tags origin "$HEAD" "$BASE"
-          git -C exact-context checkout --detach "$BASE"
-          git -C exact-context config user.name iliya
-          git -C exact-context config user.email iliyazelenkog@gmail.com
-          [[ "$(git -C exact-context var GIT_AUTHOR_IDENT)" = "iliya <iliyazelenkog@gmail.com> "* ]]
-          [[ "$(git -C exact-context var GIT_COMMITTER_IDENT)" = "iliya <iliyazelenkog@gmail.com> "* ]]
-          git -C exact-context merge --no-ff --no-commit "$HEAD"
-          git -C exact-context commit -m "test: qualify exact PR head and base"
-          test -f exact-context/.github/workflows/metadata.yml
-          if [ "$BASE_REF" = fixture/base-final ]; then
-            grep -q 'TEST-only alternate base' exact-context/README.md
-          elif [ "$BASE_REF" = main ]; then
-            if grep -q 'TEST-only alternate base' exact-context/README.md; then exit 1; fi
-          fi
-          tested=$(git -C exact-context rev-parse HEAD)
-          parents=$(git -C exact-context show -s --format=%P HEAD)
-          [ "$parents" = "$BASE $HEAD" ]
-          echo "TEST head=$HEAD base=$BASE base_ref=$BASE_REF tested=$tested parents=$parents event_merge=$GITHUB_SHA action=$ACTION"
-          if [ "$ACTION" = opened ]; then sleep 100; else sleep 2; fi
+    - name: Preserve native event identity
+      shell: bash
+      run: echo "TEST_EVENT_SHA_BEFORE=$GITHUB_SHA" >> "$GITHUB_ENV"
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ github.event_name == 'pull_request' && github.event.action == 'edited'
+          && github.event.changes.base != null && github.event.pull_request.head.sha
+          || '' }}
+        fetch-depth: '0'
+        persist-credentials: 'false'
+    - name: Qualify exact changed-base source
+      if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited'
+        && github.event.changes.base != null }}
+      shell: bash
+      env:
+        CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        CI_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        CI_PR_SOURCE_HELPER_SHA: 80a9792c811231e9d10813d913f5a682dee18c6a
+      run: 'set -euo pipefail
+
+        helper_dir=$(mktemp -d "$RUNNER_TEMP/ci-pr-base-source.XXXXXX")
+
+        trap ''rm -rf "$helper_dir"'' EXIT
+
+        git init --bare --quiet "$helper_dir/source.git"
+
+        git -C "$helper_dir/source.git" -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=60
+        fetch --quiet --no-tags --depth=1 https://github.com/777genius/agent-notifications.git
+        "$CI_PR_SOURCE_HELPER_SHA"
+
+        git -C "$helper_dir/source.git" show "$CI_PR_SOURCE_HELPER_SHA:tools/ci_qualify_pr_base.sh"
+        > "$helper_dir/qualify.sh"
+
+        bash "$helper_dir/qualify.sh"
+
+        '
+    - name: Native unwrapped checkout control
+      if: ${{ !(github.event_name == 'pull_request' && github.event.action == 'edited'
+        && github.event.changes.base != null) }}
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: '0'
+        persist-credentials: 'false'
+        path: .vanilla-baseline
+    - name: Assert actual product bootstrap contract
+      shell: bash
+      env:
+        EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+        EXPECTED_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        CHANGED_BASE: ${{ github.event_name == 'pull_request' && github.event.action
+          == 'edited' && github.event.changes.base != null }}
+        EVENT_CONTEXT_SHA: ${{ github.sha }}
+        EXPECTED_REPOSITORY: ${{ github.repository }}
+        HELPER_PIN: 80a9792c811231e9d10813d913f5a682dee18c6a
+      run: "test \"$GITHUB_SHA\" = \"$TEST_EVENT_SHA_BEFORE\"\ntest \"$GITHUB_SHA\"\
+        \ = \"$EVENT_CONTEXT_SHA\"\ntest \"$(git rev-parse --show-toplevel)\" = \"\
+        $GITHUB_WORKSPACE\"\ntest \"$(git rev-parse --absolute-git-dir)\" = \"$GITHUB_WORKSPACE/.git\"\
+        \ntested=$(git rev-parse HEAD)\nparents=$(git show -s --format=%P HEAD)\n\
+        wrapper_shallow=$(git rev-parse --is-shallow-repository)\norigin=$(git remote\
+        \ get-url origin)\ncase \"$origin\" in\n  \"https://github.com/$EXPECTED_REPOSITORY\"\
+        |\"https://github.com/$EXPECTED_REPOSITORY.git\") ;;\n  *) echo 'Wrong caller\
+        \ repository checkout' >&2; exit 1 ;;\nesac\nif git cat-file -e \"$HELPER_PIN^{commit}\"\
+        \ 2>/dev/null; then\n  echo 'Producer helper object polluted caller source\
+        \ Git storage' >&2\n  exit 1\nfi\nshopt -s nullglob\nhelper_dirs=(\"$RUNNER_TEMP\"\
+        /ci-pr-base-source.*)\ntest \"${#helper_dirs[@]}\" -eq 0\nif [ \"$CHANGED_BASE\"\
+        \ = true ]; then\n  test \"$parents\" = \"$EXPECTED_BASE $EXPECTED_HEAD\"\n\
+        \  test \"$wrapper_shallow\" = false\n  test \"$tested\" != \"$GITHUB_SHA\"\
+        \n  test \"$EXPECTED_BASE_REF\" = fixture/base-final\n  test \"$(git show\
+        \ -s --format='%an <%ae>' HEAD)\" = 'iliya <iliyazelenkog@gmail.com>'\n  test\
+        \ \"$(git show -s --format='%cn <%ce>' HEAD)\" = 'iliya <iliyazelenkog@gmail.com>'\n\
+        \  grep -q 'TEST-only alternate base' README.md\n  baseline=not-run\n  mode=changed-base\n\
+        else\n  baseline=$(git -C .vanilla-baseline rev-parse HEAD)\n  test \"$tested\"\
+        \ = \"$baseline\"\n  test \"$baseline\" = \"$EVENT_CONTEXT_SHA\"\n  test \"\
+        $wrapper_shallow\" = false\n  test \"$(git -C .vanilla-baseline rev-parse\
+        \ --is-shallow-repository)\" = false\n  test \"$EXPECTED_BASE_REF\" = main\n\
+        \  if grep -q 'TEST-only alternate base' README.md; then exit 1; fi\n  mode=normal\n\
+        fi\necho \"TEST_BOOTSTRAP mode=$mode tested=$tested expected_head=$EXPECTED_HEAD\
+        \ expected_base=$EXPECTED_BASE parents=$parents event_before=$TEST_EVENT_SHA_BEFORE\
+        \ event_after=$GITHUB_SHA baseline=$baseline repository=$EXPECTED_REPOSITORY\
+        \ helper_object_absent=true helper_temp_clean=true helper_pin=$HELPER_PIN\"\
+        \necho 'Changed-base run-local merge is NONQUALIFIED for immutable product\
+        \ release evidence.'\n"
