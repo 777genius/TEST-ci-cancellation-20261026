@@ -58,6 +58,7 @@ jobs:
         run: |
           trap 'echo "TEST same-job cleanup; no external resources"' EXIT
           echo "TEST barrier run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT sha=$GITHUB_SHA"
+          if [[ "$MESSAGE" = *"TEST intentional failure"* ]]; then exit 1; fi
           if [[ "$MESSAGE" = *slow* ]]; then sleep 100; else sleep 12; fi
   reusable:
     needs: [current, matrix]
