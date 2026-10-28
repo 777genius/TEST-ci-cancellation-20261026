@@ -1,0 +1,31 @@
+name: TEST Pending Replacement
+on:
+  push:
+    branches: [fixture/supplement]
+    paths: [pending-scenario.txt, .github/workflows/pending.yml]
+concurrency:
+  group: test-pending-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  work:
+    runs-on: windows-latest
+    timeout-minutes: 3
+    steps:
+      - shell: bash
+        env:
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          echo "TEST work $GITHUB_RUN_ID $GITHUB_SHA"
+          if [[ "$MESSAGE" = *"phase A"* ]]; then sleep 100; else sleep 2; fi
+  teardown:
+    needs: work
+    if: always()
+    runs-on: windows-latest
+    timeout-minutes: 1
+    steps:
+      - shell: bash
+        run: |
+          echo "TEST owned bounded teardown; no external resources"
+          sleep 20
